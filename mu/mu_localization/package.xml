@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>mu_localization</name>
+  <version>0.0.1</version>
+  <description>2D LiDAR localization on a saved map (map_server + AMCL) for Foxy</description>
+
+  <maintainer email="you@example.com">you</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <!-- Launch -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- Localization -->
+  <exec_depend>nav2_map_server</exec_depend>
+  <exec_depend>nav2_amcl</exec_depend>
+
+  <!-- TF & msgs -->
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
+
+  <!-- If you view in RViz -->
+  <exec_depend>rviz2</exec_depend>
+
+  <!-- You already have LiDAR publisher in mu_bringup -->
+  <exec_depend>mu_bringup</exec_depend>
+  
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+
+</package>

@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MuMainWindow</class>
+ <widget class="QMainWindow" name="MuMainWindow">
+  <property name="geometry">
+   <rect><x>0</x><y>0</y><width>1000</width><height>680</height></rect>
+  </property>
+  <property name="windowTitle">
+   <string>mu_ui - Bringup &amp; Topic Viewer</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout_root">
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_topbar">
+      <item>
+       <widget class="QPushButton" name="btnBringupStart">
+        <property name="text"><string>Bringup Start</string></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btnBringupStop">
+        <property name="text"><string>Bringup Stop</string></property>
+        <property name="enabled"><bool>false</bool></property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lblBringupStatus">
+        <property name="text"><string>Bringup: stopped</string></property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacerTop">
+        <property name="orientation"><enum>Qt::Horizontal</enum></property>
+        <property name="sizeHint"><size><width>40</width><height>20</height></size></property>
+       </spacer>
+      </item>
+     </layout>
+    </item>
+
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_body">
+      <!-- Left panel -->
+      <item>
+       <widget class="QFrame" name="leftPanel">
+        <property name="frameShape"><enum>QFrame::StyledPanel</enum></property>
+        <layout class="QVBoxLayout" name="verticalLayout_left">
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_controls">
+           <item>
+            <widget class="QPushButton" name="btnRefresh">
+             <property name="text"><string>Refresh Topics</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QSpinBox" name="spinQueue">
+             <property name="minimum"><number>1</number></property>
+             <property name="maximum"><number>1000</number></property>
+             <property name="value"><number>10</number></property>
+             <property name="toolTip"><string>QoS queue depth</string></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QListWidget" name="listTopics">
+           <property name="selectionMode"><enum>QAbstractItemView::SingleSelection</enum></property>
+          </widget>
+         </item>
+         <item>
+          <layout class="QHBoxLayout" name="horizontalLayout_subBtns">
+           <item>
+            <widget class="QPushButton" name="btnSubscribe">
+             <property name="text"><string>Subscribe (Echo)</string></property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="btnUnsubscribe">
+             <property name="text"><string>Unsubscribe</string></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+        </layout>
+       </widget>
+      </item>
+
+      <!-- Right panel -->
+      <item>
+       <widget class="QFrame" name="rightPanel">
+        <property name="frameShape"><enum>QFrame::StyledPanel</enum></property>
+        <layout class="QVBoxLayout" name="verticalLayout_right">
+         <item>
+          <layout class="QGridLayout" name="gridLayout_meta">
+           <item row="0" column="0">
+            <widget class="QLabel" name="labelTopic">
+             <property name="text"><string>Topic:</string></property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QLabel" name="lblSelectedTopic">
+             <property name="text"><string>-</string></property>
+             <property name="textInteractionFlags"><set>Qt::TextSelectableByMouse</set></property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="labelType">
+             <property name="text"><string>Type:</string></property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QLabel" name="lblType">
+             <property name="text"><string>-</string></property>
+             <property name="textInteractionFlags"><set>Qt::TextSelectableByMouse</set></property>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="labelLast">
+             <property name="text"><string>Last Update:</string></property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QLabel" name="lblLastUpdate">
+             <property name="text"><string>-</string></property>
+            </widget>
+           </item>
+          </layout>
+         </item>
+         <item>
+          <widget class="QPlainTextEdit" name="txtMessage">
+           <property name="readOnly"><bool>true</bool></property>
+           <property name="placeholderText"><string>Latest message in YAML will appear here...</string></property>
+          </widget>
+         </item>
+        </layout>
+       </widget>
+      </item>
+     </layout>
+    </item>
+   </layout>
+  </widget>
+
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
