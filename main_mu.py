@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from mu.mu_runner.config import MuConfig, parse_args
-from ui.mu_ui import run_app  # GUI 진입점
+from ui.mu_ui.app import run_app  # GUI 진입점
 
 def main():
     cfg = MuConfig.from_args(parse_args())

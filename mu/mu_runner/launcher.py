@@ -1,51 +1,57 @@
-# mu/mu_runner/launcher.py
-import os
-import signal
+"""Backward-compatible launch helpers that wrap :mod:`mu.mu_runner.process`."""
+from __future__ import annotations
+
 import subprocess
 from typing import List, Optional
+
+from .commands import build_launch_command, build_shell_command
 from .config import MuConfig
-from .env import build_source_prefix
+from .process import (
+    RosLaunchProcess,
+    ensure_ros_setup,
+    stop_process_tree,
+)
+
 
 def build_launch_cmd(cfg: MuConfig, extra_ros_args: Optional[List[str]] = None) -> str:
-    prefix = build_source_prefix(cfg)
-    args_str = " ".join(extra_ros_args) if extra_ros_args else ""
-    return f"{prefix} && ros2 launch {cfg.package} {cfg.launch_file} {args_str}".strip()
+    """Return the ros2 launch command for the configured package."""
+    return build_launch_command(
+        cfg,
+        cfg.package,
+        cfg.launch_file,
+        extra_ros_args=extra_ros_args,
+    )
 
 def launch(cfg: MuConfig, extra_ros_args: Optional[List[str]] = None) -> None:
     if not cfg.ros_setup.exists():
-        raise FileNotFoundError(f"ROS setup not found: {cfg.ros_setup}")
+        """Run ros2 launch synchronously using :func:`subprocess.run`."""
+    ensure_ros_setup(cfg)
     cmd = build_launch_cmd(cfg, extra_ros_args)
-    shell = ["bash", "-i", "-c", cmd] if cfg.interactive_bash else ["bash", "-c", cmd]
+    shell = build_shell_command(cfg, cmd)
     print(f"[INFO] Executing (sync): {' '.join(shell)}")
     subprocess.run(shell, check=True)
 
-def launch_async(cfg: MuConfig, extra_ros_args: Optional[List[str]] = None) -> subprocess.Popen:
-    """ros2 launch를 백그라운드로 실행하고 Popen을 반환."""
-    if not cfg.ros_setup.exists():
-        raise FileNotFoundError(f"ROS setup not found: {cfg.ros_setup}")
+def launch_async(
+    cfg: MuConfig, extra_ros_args: Optional[List[str]] = None
+) -> subprocess.Popen:
+    """Launch ros2 in the background and return the :class:`Popen` handle."""
+    launcher = RosLaunchProcess(
+        cfg=cfg,
+        package=cfg.package,
+        launch_file=cfg.launch_file,
+        extra_ros_args=extra_ros_args,
+    )
+    ensure_ros_setup(cfg)
     cmd = build_launch_cmd(cfg, extra_ros_args)
-    shell = ["bash", "-i", "-c", cmd] if cfg.interactive_bash else ["bash", "-c", cmd]
+    shell = build_shell_command(cfg, cmd)
     print(f"[INFO] Executing (async): {' '.join(shell)}")
-    # 새 프로세스 그룹으로 실행 → 나중에 그룹 전체에 SIGINT/SIGTERM 보낼 수 있음
-    return subprocess.Popen(shell, preexec_fn=os.setsid)
+    return launcher.start()
 
-def stop_process_tree(proc: subprocess.Popen, sig=signal.SIGINT, wait_seconds: float = 8.0):
-    """ros2 launch 프로세스 그룹에 신호를 보내서 정리."""
-    if proc is None:
-        return
-    try:
-        pgid = os.getpgid(proc.pid)
-        os.killpg(pgid, sig)
-    except Exception:
-        # 마지막 수단으로 terminate/kill
-        try:
-            proc.terminate()
-        except Exception:
-            pass
-    try:
-        proc.wait(timeout=wait_seconds)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+
+__all__ = [
+    "build_launch_cmd",
+    "launch",
+    "launch_async",
+    "stop_process_tree",
+    "RosLaunchProcess",
+]
