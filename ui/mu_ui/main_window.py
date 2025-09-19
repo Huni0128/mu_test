@@ -17,7 +17,13 @@ from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from mu.mu_runner.config import MuConfig
 
 from .managers import BringupManager, CartographerManager
-from .map_utils import format_map_info, format_stamp, write_map_files
+from .map_utils import (
+    format_map_info,
+    format_stamp,
+    write_map_files,
+    occupancy_to_gray,
+    quaternion_to_yaw,
+)
 from .map_view import MapGraphicsView, MapSignal
 from .ros_bridge import RosBridge
 
@@ -235,106 +241,140 @@ class MuMainWindow(QMainWindow):
         )
 
     def _update_map_display(self, grid: OccupancyGrid):
+        image = self._grid_to_qimage(grid)
+        if image is None:
+            return
+        pixmap = QPixmap.fromImage(image)
+        if self._map_pixmap_item is None:
+            self._map_pixmap_item = self.map_scene.addPixmap(pixmap)
+            self._map_pixmap_item.setZValue(0)
+        else:
+            self._map_pixmap_item.setPixmap(pixmap)
+        self.map_scene.setSceneRect(QRectF(pixmap.rect()))
+        size = (int(grid.info.width), int(grid.info.height))
+        size_changed = self._last_map_size != size or self._map_pixmap_item is None
+        self._last_map_size = size
+        self.graphicsViewMap.update_map_item(self._map_pixmap_item, size_changed)
+
+    def _grid_to_qimage(self, grid: OccupancyGrid) -> Optional[QImage]:
         width = int(grid.info.width)
         height = int(grid.info.height)
         if width <= 0 or height <= 0:
-            return
-        resolution = grid.info.resolution
-        origin = grid.info.origin.position
-        new_size = (width, height)
-        size_changed = new_size != self._last_map_size
-        self._last_map_size = new_size
-        qimage, pixmap = self._create_map_pixmap(grid, width, height)
-        if qimage is None or pixmap is None:
-            return
-        if self._map_pixmap_item is None:
-            self._map_pixmap_item = self.map_scene.addPixmap(pixmap)
-        else:
-            self._map_pixmap_item.setPixmap(pixmap)
-        self._map_pixmap_item.setOffset(origin.x - (width * resolution) / 2.0,
-                                        origin.y - (height * resolution) / 2.0)
-        self._map_pixmap_item.setScale(resolution)
-        self.graphicsViewMap.update_map_item(self._map_pixmap_item, size_changed)
-
-    def _create_map_pixmap(
-        self,
-        grid: OccupancyGrid,
-        width: int,
-        height: int,
-    ) -> Tuple[Optional[QImage], Optional[QPixmap]]:
-        if self._map_image_data is None or len(self._map_image_data) != width * height * 4:
-            self._map_image_data = bytearray(width * height * 4)
+            return None
         data = grid.data
+        if len(data) != width * height:
+            return None
+        values = bytearray(width * height)
         for idx, occ in enumerate(data):
-            r, g, b, a = self._occupancy_to_rgba(occ)
-            base = idx * 4
-            self._map_image_data[base] = r
-            self._map_image_data[base + 1] = g
-            self._map_image_data[base + 2] = b
-            self._map_image_data[base + 3] = a
-        image = QImage(
-            self._map_image_data,
-            width,
-            height,
-            QImage.Format_RGBA8888,
-        ).mirrored(False, True)
-        pixmap = QPixmap.fromImage(image)
-        return image, pixmap
-
-    @staticmethod
-    def _occupancy_to_rgba(occ: int) -> Tuple[int, int, int, int]:
-        if occ < 0:
-            return 205, 205, 205, 255
-        value = max(0, min(255, int(round(255 - (occ / 100.0) * 255))))
-        return value, value, value, 255
+            values[idx] = occupancy_to_gray(occ)
+        flipped = bytearray(width * height)
+        for y in range(height):
+            src = (height - 1 - y) * width
+            dst = y * width
+            flipped[dst : dst + width] = values[src : src + width]
+        self._map_image_data = flipped
+        image = QImage(self._map_image_data, width, height, width, QImage.Format_Grayscale8)
+        return image
 
     def _update_robot_pose_visual(self):
-        if self._map_pixmap_item is None:
+        if self._latest_grid is None or self._map_pixmap_item is None:
+            self._set_robot_items_visible(False)
             return
-        transform = self._fetch_robot_pose()
+        target_frame = self._map_frame_id or "map"
+        transform = self.bridge.lookup_transform(target_frame, self._robot_frame)
         if transform is None:
-            if self._robot_pose_item:
-                self._robot_pose_item.setVisible(False)
-            if self._robot_heading_item:
-                self._robot_heading_item.setVisible(False)
+            self._set_robot_items_visible(False)
             return
-        pose = transform.transform
-        x = pose.translation.x
-        y = pose.translation.y
-        z = pose.translation.z
-        q = pose.rotation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        if self._robot_pose_item is None or self._robot_heading_item is None:
-            self._create_robot_pose_items()
-        self._update_robot_pose_geometry(x, y, z, yaw)
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        yaw_map = quaternion_to_yaw(rotation)
+        coords = self._pose_to_display_coordinates(
+            self._latest_grid,
+            float(translation.x),
+            float(translation.y),
+            yaw_map,
+        )
+        if coords is None:
+            self._set_robot_items_visible(False)
+            return
+        display_x, display_y, display_yaw = coords
+        self._ensure_robot_items()
+        self._draw_robot_marker(display_x, display_y, display_yaw)
+
+    def _pose_to_display_coordinates(
+        self,
+        grid: OccupancyGrid,
+        x_map: float,
+        y_map: float,
+        yaw_map: float,
+    ) -> Optional[Tuple[float, float, float]]:
+        width = float(grid.info.width)
+        height = float(grid.info.height)
+        resolution = float(grid.info.resolution)
+        if width <= 0 or height <= 0 or resolution <= 0:
+            return None
+        origin = grid.info.origin
+        origin_yaw = quaternion_to_yaw(origin.orientation)
+        dx = x_map - float(origin.position.x)
+        dy = y_map - float(origin.position.y)
+        cos_o = math.cos(origin_yaw)
+        sin_o = math.sin(origin_yaw)
+        grid_x = (cos_o * dx + sin_o * dy) / resolution
+        grid_y = (-sin_o * dx + cos_o * dy) / resolution
+        if any(math.isnan(v) or math.isinf(v) for v in (grid_x, grid_y)):
+            return None
+        margin = 0.2
+        if (
+            grid_x < -width * margin
+            or grid_y < -height * margin
+            or grid_x > width * (1.0 + margin)
+            or grid_y > height * (1.0 + margin)
+        ):
+            return None
+        display_x = grid_x
+        display_y = (height - 1.0) - grid_y
+        grid_yaw = yaw_map - origin_yaw
+        display_yaw = -grid_yaw
+        return display_x, display_y, display_yaw
+
+    def _ensure_robot_items(self):
+        if self._robot_pose_item is None:
+            pen = QPen(QColor(30, 144, 255))
+            pen.setWidthF(2.0)
+            pen.setCosmetic(True)
+            brush = QBrush(QColor(30, 144, 255, 90))
+            self._robot_pose_item = self.map_scene.addEllipse(0, 0, 0, 0, pen, brush)
+            self._robot_pose_item.setZValue(10)
+        if self._robot_heading_item is None:
+            pen = QPen(QColor(255, 85, 0))
+            pen.setWidthF(2.5)
+            pen.setCosmetic(True)
+            self._robot_heading_item = self.map_scene.addLine(0, 0, 0, 0, pen)
+            self._robot_heading_item.setZValue(11)
+
+    def _set_robot_items_visible(self, visible: bool):
         if self._robot_pose_item:
-            self._robot_pose_item.setVisible(True)
+            self._robot_pose_item.setVisible(visible)
         if self._robot_heading_item:
-            self._robot_heading_item.setVisible(True)
+            self._robot_heading_item.setVisible(visible)
 
-    def _create_robot_pose_items(self):
-        pose_pen = QPen(QColor("red"))
-        pose_brush = QBrush(QColor(255, 0, 0, 128))
-        self._robot_pose_item = self.map_scene.addEllipse(QRectF(-0.15, -0.15, 0.3, 0.3), pose_pen, pose_brush)
-        heading_pen = QPen(QColor("blue"))
-        heading_pen.setWidthF(0.05)
-        self._robot_heading_item = self.map_scene.addLine(0, 0, 0.4, 0, heading_pen)
-
-    def _update_robot_pose_geometry(self, x: float, y: float, z: float, yaw: float):
+    def _draw_robot_marker(self, x: float, y: float, yaw: float):
         if not self._robot_pose_item or not self._robot_heading_item:
             return
-        self._robot_pose_item.setPos(x, y)
-        self._robot_pose_item.setZValue(z)
-        length = 0.4
-        end_x = x + length * math.cos(yaw)
-        end_y = y + length * math.sin(yaw)
+        grid = self._latest_grid
+        if grid is None:
+            return
+        resolution = float(grid.info.resolution)
+        if resolution <= 0:
+            return
+        radius_pixels = max(4.0, 0.25 / resolution)
+        diameter = radius_pixels * 2.0
+        self._robot_pose_item.setRect(x - radius_pixels, y - radius_pixels, diameter, diameter)
+        heading_length = max(6.0, 0.45 / resolution)
+        end_x = x + heading_length * math.cos(yaw)
+        end_y = y + heading_length * math.sin(yaw)
         self._robot_heading_item.setLine(x, y, end_x, end_y)
-        self._robot_heading_item.setZValue(z + 0.01)
-
-    def _fetch_robot_pose(self):
-        target_frame = self._map_frame_id
-        transform = self.bridge.lookup_transform(target_frame, self._robot_frame)
-        return transform
+        self._set_robot_items_visible(True)
 
     # ----- Topic handlers -----
     def on_refresh(self):
