@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Optional, List, Tuple, Callable
 
 from PyQt5 import uic
-from PyQt5.QtCore import QObject, pyqtSignal, Qt
+from PyQt5.QtCore import QObject, pyqtSignal, Qt, QTimer, QRectF
 from PyQt5.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -26,16 +26,19 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
     QFileDialog,
     QGraphicsScene,
+    QGraphicsView,
 )
-from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtGui import QImage, QPixmap, QPen, QBrush, QColor, QPainter
 
 # ROS 2
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy
+from rclpy.time import Time
 from rosidl_runtime_py.utilities import get_message
 from rosidl_runtime_py import message_to_yaml
 from nav_msgs.msg import OccupancyGrid
+from tf2_ros import Buffer, TransformListener
 
 # 기존 설정/환경 유틸 재사용
 from mu.mu_runner.config import MuConfig
@@ -139,6 +142,65 @@ class MapSignal(QObject):
     map_received = pyqtSignal(object)
 
 
+class MapGraphicsView(QGraphicsView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        self.setRenderHint(QPainter.Antialiasing, True)
+        self.setRenderHint(QPainter.SmoothPixmapTransform, True)
+        self._map_item = None
+        self._auto_fit = True
+        self._zoom = 0
+        self._zoom_step = 1.25
+        self._zoom_range = (-20, 50)
+
+    def update_map_item(self, item, size_changed: bool):
+        self._map_item = item
+        if self._map_item is None:
+            self.resetTransform()
+            self._zoom = 0
+            return
+        if size_changed:
+            self.reset_view()
+        elif self._auto_fit:
+            self._apply_fit()
+
+    def reset_view(self):
+        self._auto_fit = True
+        self._zoom = 0
+        self._apply_fit()
+
+    def wheelEvent(self, event):
+        if self._map_item is None:
+            event.ignore()
+            return
+        delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+        direction = 1 if delta > 0 else -1
+        new_zoom = self._zoom + direction
+        if new_zoom < self._zoom_range[0] or new_zoom > self._zoom_range[1]:
+            event.ignore()
+            return
+        factor = self._zoom_step if direction > 0 else 1.0 / self._zoom_step
+        self.scale(factor, factor)
+        self._zoom = new_zoom
+        self._auto_fit = False
+        event.accept()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._auto_fit and self._map_item is not None:
+            self._apply_fit()
+
+    def _apply_fit(self):
+        if self._map_item is None:
+            return
+        self.resetTransform()
+        self.fitInView(self._map_item, Qt.KeepAspectRatio)
 # -------- ROS bridge (topic list / echo) --------
 class RosBridge(QObject):
     message_received = pyqtSignal(str, str, str)  # topic, type, yaml
@@ -162,6 +224,9 @@ class RosBridge(QObject):
 
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
+
+        self._tf_buffer = Buffer()
+        self._tf_listener = TransformListener(self._tf_buffer, self._node, spin_thread=False)
 
     def _spin(self):
         try:
@@ -261,6 +326,15 @@ class RosBridge(QObject):
             except Exception as e:
                 self.error_signal.emit(f"Unsubscribe failed for subscription {token}: {e}")
 
+    def lookup_transform(self, target_frame: str, source_frame: str):
+        with self._lock:
+            if not target_frame or not source_frame:
+                return None
+            try:
+                return self._tf_buffer.lookup_transform(target_frame, source_frame, Time())
+            except Exception:
+                return None
+            
 
 # -------- Main Window --------
 class MuMainWindow(QMainWindow):
@@ -269,6 +343,20 @@ class MuMainWindow(QMainWindow):
         uic.loadUi(str(self._ui_path()), self)
 
         self.cfg = cfg
+
+        original_view = self.graphicsViewMap
+        self.graphicsViewMap = MapGraphicsView(original_view.parent())
+        self.graphicsViewMap.setObjectName(original_view.objectName())
+        self.graphicsViewMap.setMinimumSize(original_view.minimumSize())
+        self.graphicsViewMap.setSizePolicy(original_view.sizePolicy())
+        self.graphicsViewMap.setFrameShape(original_view.frameShape())
+        self.graphicsViewMap.setFrameShadow(original_view.frameShadow())
+        self.graphicsViewMap.setFocusPolicy(original_view.focusPolicy())
+        self.graphicsViewMap.setStyleSheet(original_view.styleSheet())
+        self.graphicsViewMap.setHorizontalScrollBarPolicy(original_view.horizontalScrollBarPolicy())
+        self.graphicsViewMap.setVerticalScrollBarPolicy(original_view.verticalScrollBarPolicy())
+        self.verticalLayout_cartographer.replaceWidget(original_view, self.graphicsViewMap)
+        original_view.deleteLater()
 
         # Widgets
         self.btnBringupStart.clicked.connect(self.on_bringup_start)
@@ -281,8 +369,11 @@ class MuMainWindow(QMainWindow):
         self.btnCartoStop.clicked.connect(self.on_carto_stop)
         self.btnMapSubscribe.clicked.connect(self.on_map_subscribe_clicked)
         self.btnSaveMap.clicked.connect(self.on_save_map)
+        self.btnResetView.clicked.connect(self.on_reset_map_view)
         self.lineMapTopic.setText(cfg.map_topic)
         self.lineMapTopic.editingFinished.connect(self.on_map_topic_edited)
+        self.lineRobotFrame.setText(cfg.robot_frame)
+        self.lineRobotFrame.editingFinished.connect(self.on_robot_frame_edited)
         self.btnSaveMap.setEnabled(False)
 
         self.map_scene = QGraphicsScene(self.graphicsViewMap)
@@ -297,6 +388,13 @@ class MuMainWindow(QMainWindow):
         self._map_callback: Optional[Callable] = None
         self._latest_grid: Optional[OccupancyGrid] = None
         self._last_map_size: Optional[Tuple[int, int]] = None
+        self._map_frame_id: str = "map"
+        self._robot_frame: str = cfg.robot_frame
+        self._robot_pose_item = None
+        self._robot_heading_item = None
+        self._robot_pose_timer = QTimer(self)
+        self._robot_pose_timer.setInterval(200)
+        self._robot_pose_timer.timeout.connect(self._update_robot_pose_visual)
 
         # State
         self.current_topic = None
@@ -315,6 +413,8 @@ class MuMainWindow(QMainWindow):
         self.bridge.topics_refreshed.connect(self.on_topics_refreshed)
         self.bridge.message_received.connect(self.on_message_received)
         self.bridge.error_signal.connect(self.on_error)
+
+        self._robot_pose_timer.start()
 
         self.statusbar.showMessage(
             "Ready. Use 'Bringup Start' for system launch or open the Cartographer tab to map."
@@ -369,6 +469,16 @@ class MuMainWindow(QMainWindow):
             self.lineMapTopic.setText(text)
         return text
 
+    def on_robot_frame_edited(self):
+        text = self.lineRobotFrame.text().strip()
+        if not text:
+            text = self.cfg.robot_frame
+        self._robot_frame = text
+        self.cfg.robot_frame = text
+        self.lineRobotFrame.setText(text)
+        self.statusbar.showMessage(f"Robot frame: {text}")
+        self._update_robot_pose_visual()
+
     def _subscribe_map(self):
         topic = self._map_topic_text()
         if self._map_subscription_token:
@@ -378,6 +488,7 @@ class MuMainWindow(QMainWindow):
         self._map_callback = callback
         map_qos = QoSProfile(depth=1)
         map_qos.durability = QoSDurabilityPolicy.TRANSIENT_LOCAL
+        self._last_map_size = None
         token = self.bridge.subscribe_typed(topic, OccupancyGrid, callback, qos=map_qos)
         if token:
             self._map_subscription_token = token
@@ -393,13 +504,21 @@ class MuMainWindow(QMainWindow):
             self._map_subscription_token = None
         self._map_callback = None
 
+    def on_reset_map_view(self):
+        self.graphicsViewMap.reset_view()
+        self._update_robot_pose_visual()
+        self.statusbar.showMessage("Map view reset to fit")
+
     def on_map_message(self, msg: OccupancyGrid):
         self._latest_grid = msg
         self.btnSaveMap.setEnabled(True)
         self.lblMapInfo.setText(self._format_map_info(msg))
         stamp_text = self._format_stamp(msg.header.stamp)
         self.lblMapUpdate.setText(f"Last update: {stamp_text}")
+        frame_id = (getattr(msg.header, "frame_id", "") or "").strip()
+        self._map_frame_id = frame_id if frame_id else "map"
         self._update_map_display(msg)
+        self._update_robot_pose_visual()
 
     def _update_map_display(self, grid: OccupancyGrid):
         image = self._grid_to_qimage(grid)
@@ -408,12 +527,14 @@ class MuMainWindow(QMainWindow):
         pixmap = QPixmap.fromImage(image)
         if self._map_pixmap_item is None:
             self._map_pixmap_item = self.map_scene.addPixmap(pixmap)
+            self._map_pixmap_item.setZValue(0)
         else:
             self._map_pixmap_item.setPixmap(pixmap)
-        self.map_scene.setSceneRect(pixmap.rect())
+        self.map_scene.setSceneRect(QRectF(pixmap.rect()))
         size = (int(grid.info.width), int(grid.info.height))
+        size_changed = self._last_map_size != size or self._map_pixmap_item is None
         self._last_map_size = size
-        self.graphicsViewMap.fitInView(self._map_pixmap_item, Qt.KeepAspectRatio)
+        self.graphicsViewMap.update_map_item(self._map_pixmap_item, size_changed)
 
     def _grid_to_qimage(self, grid: OccupancyGrid) -> Optional[QImage]:
         width = int(grid.info.width)
@@ -439,11 +560,112 @@ class MuMainWindow(QMainWindow):
         image = QImage(self._map_image_data, width, height, width, QImage.Format_Grayscale8)
         return image
 
+    def _update_robot_pose_visual(self):
+        if self._latest_grid is None or self._map_pixmap_item is None:
+            self._set_robot_items_visible(False)
+            return
+        target_frame = self._map_frame_id or "map"
+        transform = self.bridge.lookup_transform(target_frame, self._robot_frame)
+        if transform is None:
+            self._set_robot_items_visible(False)
+            return
+        translation = transform.transform.translation
+        rotation = transform.transform.rotation
+        yaw_map = MuMainWindow._quaternion_to_yaw(rotation)
+        coords = self._pose_to_display_coordinates(
+            self._latest_grid,
+            float(translation.x),
+            float(translation.y),
+            yaw_map,
+        )
+        if coords is None:
+            self._set_robot_items_visible(False)
+            return
+        display_x, display_y, display_yaw = coords
+        self._ensure_robot_items()
+        self._draw_robot_marker(display_x, display_y, display_yaw)
+
+    def _pose_to_display_coordinates(
+        self,
+        grid: OccupancyGrid,
+        x_map: float,
+        y_map: float,
+        yaw_map: float,
+    ) -> Optional[Tuple[float, float, float]]:
+        width = float(grid.info.width)
+        height = float(grid.info.height)
+        resolution = float(grid.info.resolution)
+        if width <= 0 or height <= 0 or resolution <= 0:
+            return None
+        origin = grid.info.origin
+        origin_yaw = MuMainWindow._quaternion_to_yaw(origin.orientation)
+        dx = x_map - float(origin.position.x)
+        dy = y_map - float(origin.position.y)
+        cos_o = math.cos(origin_yaw)
+        sin_o = math.sin(origin_yaw)
+        grid_x = (cos_o * dx + sin_o * dy) / resolution
+        grid_y = (-sin_o * dx + cos_o * dy) / resolution
+        if any(math.isnan(v) or math.isinf(v) for v in (grid_x, grid_y)):
+            return None
+        margin = 0.2
+        if (
+            grid_x < -width * margin
+            or grid_y < -height * margin
+            or grid_x > width * (1.0 + margin)
+            or grid_y > height * (1.0 + margin)
+        ):
+            return None
+        display_x = grid_x
+        display_y = (height - 1.0) - grid_y
+        grid_yaw = yaw_map - origin_yaw
+        display_yaw = -grid_yaw
+        return display_x, display_y, display_yaw
+
+    def _ensure_robot_items(self):
+        if self._robot_pose_item is None:
+            pen = QPen(QColor(30, 144, 255))
+            pen.setWidthF(2.0)
+            pen.setCosmetic(True)
+            brush = QBrush(QColor(30, 144, 255, 90))
+            self._robot_pose_item = self.map_scene.addEllipse(0, 0, 0, 0, pen, brush)
+            self._robot_pose_item.setZValue(10)
+        if self._robot_heading_item is None:
+            pen = QPen(QColor(255, 85, 0))
+            pen.setWidthF(2.5)
+            pen.setCosmetic(True)
+            self._robot_heading_item = self.map_scene.addLine(0, 0, 0, 0, pen)
+            self._robot_heading_item.setZValue(11)
+
+    def _set_robot_items_visible(self, visible: bool):
+        if self._robot_pose_item:
+            self._robot_pose_item.setVisible(visible)
+        if self._robot_heading_item:
+            self._robot_heading_item.setVisible(visible)
+
+    def _draw_robot_marker(self, x: float, y: float, yaw: float):
+        if not self._robot_pose_item or not self._robot_heading_item:
+            return
+        grid = self._latest_grid
+        if grid is None:
+            return
+        resolution = float(grid.info.resolution)
+        if resolution <= 0:
+            return
+        radius_pixels = max(4.0, 0.25 / resolution)
+        diameter = radius_pixels * 2.0
+        self._robot_pose_item.setRect(x - radius_pixels, y - radius_pixels, diameter, diameter)
+        heading_length = max(6.0, 0.45 / resolution)
+        end_x = x + heading_length * math.cos(yaw)
+        end_y = y + heading_length * math.sin(yaw)
+        self._robot_heading_item.setLine(x, y, end_x, end_y)
+        self._set_robot_items_visible(True)
+
     def _format_map_info(self, grid: OccupancyGrid) -> str:
         width = int(grid.info.width)
         height = int(grid.info.height)
         res = float(grid.info.resolution)
-        return f"Map: {width} x {height} cells @ {res:.3f} m"
+        frame = (getattr(grid.header, "frame_id", "") or "").strip() or "unknown"
+        return f"Map: {width} x {height} cells @ {res:.3f} m (frame: {frame})"
 
     @staticmethod
     def _format_stamp(stamp) -> str:
@@ -595,6 +817,10 @@ class MuMainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", msg)
 
     def closeEvent(self, e):
+        try:
+            self._robot_pose_timer.stop()
+        except Exception:
+            pass
         try:
             self.bridge.shutdown()
         except Exception:

@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>960</width>
-    <height>640</height>
+    <width>1280</width>
+    <height>820</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -257,7 +257,7 @@
          </layout>
         </item>
         <item>
-         <layout class="QHBoxLayout" name="horizontalLayout_mapTopic">
+        <layout class="QHBoxLayout" name="horizontalLayout_mapTopic">
           <item>
            <widget class="QLabel" name="labelMapTopic">
             <property name="text">
@@ -295,14 +295,48 @@
             </property>
            </spacer>
           </item>
-         </layout>
-        </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_robotFrame">
+         <item>
+          <widget class="QLabel" name="labelRobotFrame">
+           <property name="text">
+            <string>Robot frame:</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLineEdit" name="lineRobotFrame">
+           <property name="text">
+            <string>base_link</string>
+           </property>
+           <property name="placeholderText">
+            <string>base_link</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacerRobotFrame">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
         <item>
          <widget class="QGraphicsView" name="graphicsViewMap">
           <property name="minimumSize">
            <size>
-            <width>400</width>
-            <height>400</height>
+            <width>600</width>
+            <height>500</height>
            </size>
           </property>
          </widget>
@@ -316,30 +350,37 @@
             </property>
            </widget>
           </item>
-          <item>
-           <widget class="QLabel" name="lblMapUpdate">
-            <property name="text">
-             <string>Last update: -</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="spacerMapInfo">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QPushButton" name="btnSaveMap">
-            <property name="text">
-             <string>Save Map...</string>
+         <item>
+          <widget class="QLabel" name="lblMapUpdate">
+           <property name="text">
+            <string>Last update: -</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="spacerMapInfo">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnResetView">
+           <property name="text">
+            <string>Fit to Map</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btnSaveMap">
+           <property name="text">
+            <string>Save Map...</string>
             </property>
             <property name="enabled">
              <bool>false</bool>

@@ -13,6 +13,7 @@ class MuConfig:
     cartographer_package: str = "mu_cartographer"
     cartographer_launch_file: str = "cartographer.launch.py"
     map_topic: str = "/map"
+    robot_frame: str = "base_link"
 
     @property
     def ros_setup(self) -> Path:
@@ -36,6 +37,7 @@ class MuConfig:
             cartographer_package=args.carto_package or "mu_cartographer",
             cartographer_launch_file=args.carto_launch or "cartographer.launch.py",
             map_topic=args.map_topic or "/map",
+            robot_frame=args.robot_frame or "base_link",
         )
 
 def parse_args() -> argparse.Namespace:
@@ -52,4 +54,6 @@ def parse_args() -> argparse.Namespace:
                    help="Cartographer launch file (default: cartographer.launch.py)")
     p.add_argument("--map-topic", dest="map_topic",
                    help="Occupancy grid topic to visualize (default: /map)")
+    p.add_argument("--robot-frame", dest="robot_frame",
+                   help="TF frame name for the robot base (default: base_link)")
     return p.parse_args()
