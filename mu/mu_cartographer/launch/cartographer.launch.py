@@ -14,7 +14,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.conditions import UnlessCondition
+from launch.conditions import UnlessCondition, IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -48,6 +48,7 @@ def generate_launch_description() -> LaunchDescription:
     use_nav2 = LaunchConfiguration("use_nav2", default="false")
     occ_res = LaunchConfiguration("occ_resolution", default="0.05")
     occ_period = LaunchConfiguration("occ_publish_period_sec", default="1.0")
+    launch_rviz = LaunchConfiguration("launch_rviz", default="true")
 
     pkg_share = get_package_share_directory("mu_cartographer")
     cfg_dir = os.path.join(pkg_share, "config")
@@ -72,6 +73,7 @@ def generate_launch_description() -> LaunchDescription:
             "occ_publish_period_sec",
             default_value=occ_period,
         ),
+        DeclareLaunchArgument("launch_rviz", default_value=launch_rviz),
     ]
 
     # ---- Nodes ----
@@ -114,6 +116,7 @@ def generate_launch_description() -> LaunchDescription:
         namespace=namespace,
         arguments=rviz_args,
         output="screen",
+        condition=IfCondition(launch_rviz),
     )
 
     return LaunchDescription(

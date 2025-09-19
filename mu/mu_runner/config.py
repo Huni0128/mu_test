@@ -10,6 +10,9 @@ class MuConfig:
     package: str
     launch_file: str
     interactive_bash: bool = True
+    cartographer_package: str = "mu_cartographer"
+    cartographer_launch_file: str = "cartographer.launch.py"
+    map_topic: str = "/map"
 
     @property
     def ros_setup(self) -> Path:
@@ -30,6 +33,9 @@ class MuConfig:
             package=args.package or "mu_bringup",
             launch_file=args.launch_file or "bringup.launch.py",
             interactive_bash=not args.no_interactive,
+            cartographer_package=args.carto_package or "mu_cartographer",
+            cartographer_launch_file=args.carto_launch or "cartographer.launch.py",
+            map_topic=args.map_topic or "/map",
         )
 
 def parse_args() -> argparse.Namespace:
@@ -40,4 +46,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--launch-file", help="Launch file (default: bringup.launch.py)")
     p.add_argument("--no-interactive", action="store_true",
                    help="Do not use interactive bash (-i).")
+    p.add_argument("--carto-package", dest="carto_package",
+                   help="Cartographer package name (default: mu_cartographer)")
+    p.add_argument("--carto-launch", dest="carto_launch",
+                   help="Cartographer launch file (default: cartographer.launch.py)")
+    p.add_argument("--map-topic", dest="map_topic",
+                   help="Occupancy grid topic to visualize (default: /map)")
     return p.parse_args()
