@@ -25,7 +25,6 @@ class MuConfig:
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "MuConfig":
-        # 프로젝트 루트 = main_mu.py가 있는 폴더라고 가정
         project_root = Path(__file__).resolve().parents[2]
         ws_root = Path(args.ws_root).resolve() if args.ws_root else project_root
         return cls(

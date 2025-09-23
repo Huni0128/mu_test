@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import sys
-from typing import Any
+from types import SimpleNamespace
 
 from PyQt5.QtWidgets import QApplication
 
@@ -21,21 +21,17 @@ def run_app(cfg: MuConfig) -> None:
 
 def _default_config() -> MuConfig:
     """Construct a :class:`MuConfig` instance with default values."""
-    # The original single-file script fabricated an argparse Namespace with
-    # default values when executed directly. We mimic the same behaviour here
-    # for backwards compatibility.
-    attrs: dict[str, Any] = {
-        "ros_distro": None,
-        "ws_root": None,
-        "package": None,
-        "launch_file": None,
-        "no_interactive": False,
-        "carto_package": None,
-        "carto_launch": None,
-        "map_topic": None,
-        "robot_frame": None,
-    }
-    namespace = type("Args", (), attrs)()
+    namespace = SimpleNamespace(
+        ros_distro=None,
+        ws_root=None,
+        package=None,
+        launch_file=None,
+        no_interactive=False,
+        carto_package=None,
+        carto_launch=None,
+        map_topic=None,
+        robot_frame=None,
+    )
     return MuConfig.from_args(namespace)  # type: ignore[arg-type]
 
 

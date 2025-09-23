@@ -22,6 +22,7 @@ def build_launch_command(
 
 def build_shell_command(cfg: MuConfig, command: str) -> List[str]:
     """Wrap a command string with the proper bash invocation."""
+    shell = ["bash", "-c", command]
     if cfg.interactive_bash:
-        return ["bash", "-i", "-c", command]
-    return ["bash", "-c", command]
+        shell.insert(1, "-i")
+    return shell

@@ -109,16 +109,16 @@ def generate_launch_description() -> LaunchDescription:
         condition=UnlessCondition(use_nav2),
     )
 
-    rviz_node = Node(
-        package="rviz2",
-        executable="rviz2",
-        name="rviz2",
-        namespace=namespace,
-        arguments=rviz_args,
-        output="screen",
-        condition=IfCondition(launch_rviz),
-    )
+    # rviz_node = Node(
+    #     package="rviz2",
+    #     executable="rviz2",
+    #     name="rviz2",
+    #     namespace=namespace,
+    #     arguments=rviz_args,
+    #     output="screen",
+    #     condition=IfCondition(launch_rviz),
+    # )
 
     return LaunchDescription(
-        declared + [cartographer_node, occupancy_grid_node, rviz_node]
+        declared + [cartographer_node, occupancy_grid_node]
     )

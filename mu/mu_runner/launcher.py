@@ -4,10 +4,10 @@ from __future__ import annotations
 import subprocess
 from typing import List, Optional
 
-from .commands import build_launch_command, build_shell_command
 from .config import MuConfig
 from .process import (
     RosLaunchProcess,
+    create_launch_request,
     ensure_ros_setup,
     stop_process_tree,
 )
@@ -15,20 +15,25 @@ from .process import (
 
 def build_launch_cmd(cfg: MuConfig, extra_ros_args: Optional[List[str]] = None) -> str:
     """Return the ros2 launch command for the configured package."""
-    return build_launch_command(
+    request = create_launch_request(
         cfg,
         cfg.package,
         cfg.launch_file,
         extra_ros_args=extra_ros_args,
     )
+    return request.command()
 
 def launch(cfg: MuConfig, extra_ros_args: Optional[List[str]] = None) -> None:
-    if not cfg.ros_setup.exists():
-        """Run ros2 launch synchronously using :func:`subprocess.run`."""
+    """Run ros2 launch synchronously using :func:`subprocess.run`."""
+    request = create_launch_request(
+        cfg,
+        cfg.package,
+        cfg.launch_file,
+        extra_ros_args=extra_ros_args,
+    )
     ensure_ros_setup(cfg)
-    cmd = build_launch_cmd(cfg, extra_ros_args)
-    shell = build_shell_command(cfg, cmd)
-    print(f"[INFO] Executing (sync): {' '.join(shell)}")
+    shell = request.shell()
+    _log_shell("sync", shell)
     subprocess.run(shell, check=True)
 
 def launch_async(
@@ -42,9 +47,8 @@ def launch_async(
         extra_ros_args=extra_ros_args,
     )
     ensure_ros_setup(cfg)
-    cmd = build_launch_cmd(cfg, extra_ros_args)
-    shell = build_shell_command(cfg, cmd)
-    print(f"[INFO] Executing (async): {' '.join(shell)}")
+    shell = launcher.request.shell()
+    _log_shell("async", shell)
     return launcher.start()
 
 
@@ -55,3 +59,7 @@ __all__ = [
     "stop_process_tree",
     "RosLaunchProcess",
 ]
+
+
+def _log_shell(mode: str, shell: List[str]) -> None:
+    print(f"[INFO] Executing ({mode}): {' '.join(shell)}")

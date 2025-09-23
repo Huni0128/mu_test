@@ -9,7 +9,15 @@ from typing import Callable, Optional, Tuple
 from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer, QRectF
 from PyQt5.QtGui import QColor, QBrush, QImage, QPen, QPixmap
-from PyQt5.QtWidgets import QFileDialog, QListWidgetItem, QGraphicsScene, QMainWindow, QMessageBox
+from PyQt5.QtWidgets import (
+    QFileDialog,
+    QListWidgetItem,
+    QGraphicsScene,
+    QMainWindow,
+    QMessageBox,
+    QAbstractButton,
+    QLabel,
+)
 
 from nav_msgs.msg import OccupancyGrid
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
@@ -21,7 +29,7 @@ from .map_utils import (
     format_map_info,
     format_stamp,
     write_map_files,
-    occupancy_to_gray,
+    occupancy_grid_to_image,
     quaternion_to_yaw,
 )
 from .map_view import MapGraphicsView, MapSignal
@@ -123,12 +131,14 @@ class MuMainWindow(QMainWindow):
         self.bringup.stop()
 
     def on_bringup_state(self, running: bool, text: str):
-        self.lblBringupStatus.setText(text)
-        self.btnBringupStart.setEnabled(not running)
-        self.btnBringupStop.setEnabled(running)
-        self.statusbar.showMessage(text)
-        if running:
-            self.on_refresh()
+        self._update_launch_state(
+            running,
+            text,
+            self.btnBringupStart,
+            self.btnBringupStop,
+            self.lblBringupStatus,
+            on_running=self.on_refresh,
+        )
 
     # ----- Cartographer handlers -----
     def on_carto_start(self):
@@ -139,12 +149,14 @@ class MuMainWindow(QMainWindow):
         self.carto.stop()
 
     def on_carto_state(self, running: bool, text: str):
-        self.lblCartoStatus.setText(text)
-        self.btnCartoStart.setEnabled(not running)
-        self.btnCartoStop.setEnabled(running)
-        self.statusbar.showMessage(text)
-        if running:
-            self._subscribe_map()
+        self._update_launch_state(
+            running,
+            text,
+            self.btnCartoStart,
+            self.btnCartoStop,
+            self.lblCartoStatus,
+            on_running=self._subscribe_map,
+        )
 
     def on_map_topic_edited(self):
         if self._map_subscription_token or self.carto.is_running():
@@ -257,24 +269,18 @@ class MuMainWindow(QMainWindow):
         self.graphicsViewMap.update_map_item(self._map_pixmap_item, size_changed)
 
     def _grid_to_qimage(self, grid: OccupancyGrid) -> Optional[QImage]:
-        width = int(grid.info.width)
-        height = int(grid.info.height)
-        if width <= 0 or height <= 0:
+        try:
+            image_data = occupancy_grid_to_image(grid)
+        except ValueError:
             return None
-        data = grid.data
-        if len(data) != width * height:
-            return None
-        values = bytearray(width * height)
-        for idx, occ in enumerate(data):
-            values[idx] = occupancy_to_gray(occ)
-        flipped = bytearray(width * height)
-        for y in range(height):
-            src = (height - 1 - y) * width
-            dst = y * width
-            flipped[dst : dst + width] = values[src : src + width]
-        self._map_image_data = flipped
-        image = QImage(self._map_image_data, width, height, width, QImage.Format_Grayscale8)
-        return image
+        self._map_image_data = image_data.pixels
+        return QImage(
+            self._map_image_data,
+            image_data.width,
+            image_data.height,
+            image_data.width,
+            QImage.Format_Grayscale8,
+        )
 
     def _update_robot_pose_visual(self):
         if self._latest_grid is None or self._map_pixmap_item is None:
@@ -435,24 +441,34 @@ class MuMainWindow(QMainWindow):
         QMessageBox.critical(self, "Error", msg)
 
     def closeEvent(self, e):
-        try:
-            self._robot_pose_timer.stop()
-        except Exception:
-            pass
-        try:
-            self.bridge.shutdown()
-        except Exception:
-            pass
-        try:
-            self._unsubscribe_map()
-        except Exception:
-            pass
-        try:
-            self.carto.stop()
-        except Exception:
-            pass
-        try:
-            self.bringup.stop()
-        except Exception:
-            pass
+        for action in (
+            self._robot_pose_timer.stop,
+            self.bridge.shutdown,
+            self._unsubscribe_map,
+            self.carto.stop,
+            self.bringup.stop,
+        ):
+            self._safe_call(action)
         super().closeEvent(e)
+
+    def _update_launch_state(
+        self,
+        running: bool,
+        text: str,
+        start_button: QAbstractButton,
+        stop_button: QAbstractButton,
+        label: QLabel,
+        on_running: Optional[Callable[[], None]] = None,
+    ) -> None:
+        label.setText(text)
+        start_button.setEnabled(not running)
+        stop_button.setEnabled(running)
+        self.statusbar.showMessage(text)
+        if running and on_running is not None:
+            on_running()
+
+    def _safe_call(self, func: Callable[[], None]) -> None:
+        try:
+            func()
+        except Exception as e:
+            print(f"[ERROR] Exception during shutdown: {e}")

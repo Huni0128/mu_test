@@ -3,17 +3,20 @@ from __future__ import annotations
 
 import threading
 import traceback
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
 from rclpy.qos import QoSProfile
 from rclpy.time import Time
 from rosidl_runtime_py import message_to_yaml
 from rosidl_runtime_py.utilities import get_message
 from tf2_ros import Buffer, TransformListener
+
+SubscriptionRecord = Tuple[Any, str]
 
 
 class RosBridge(QObject):
@@ -23,11 +26,11 @@ class RosBridge(QObject):
 
     def __init__(self, node_name: str = "mu_ui_node"):
         super().__init__()
-        self._node = None
-        self._executor = None
-        self._thread = None
-        self._subs = {}  # topic -> (subscription, type_str)
-        self._custom_subs = {}  # token -> subscription
+        self._node: Node
+        self._executor: SingleThreadedExecutor
+        self._thread: threading.Thread
+        self._subs: Dict[str, SubscriptionRecord] = {}
+        self._custom_subs: Dict[str, Any] = {}
         self._custom_counter = 0
         self._lock = threading.RLock()
 
@@ -42,13 +45,13 @@ class RosBridge(QObject):
         self._tf_buffer = Buffer()
         self._tf_listener = TransformListener(self._tf_buffer, self._node, spin_thread=False)
 
-    def _spin(self):
+    def _spin(self) -> None:
         try:
             self._executor.spin()
-        except Exception as e:
-            self.error_signal.emit(f"Executor stopped: {e}\n{traceback.format_exc()}")
+        except Exception as exc:
+            self.error_signal.emit(f"Executor stopped: {exc}\n{traceback.format_exc()}")
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         with self._lock:
             for topic in list(self._subs.keys()):
                 self.unsubscribe(topic)
@@ -62,8 +65,7 @@ class RosBridge(QObject):
         finally:
             rclpy.shutdown()
 
-    # Topic operations --------------------------------------------------
-    def refresh_topics(self):
+    def refresh_topics(self) -> None:
         try:
             pairs = self._node.get_topic_names_and_types()
             flattened = []
@@ -71,44 +73,39 @@ class RosBridge(QObject):
                 if types:
                     flattened.append((name, types[0]))
             self.topics_refreshed.emit(sorted(flattened, key=lambda x: x[0]))
-        except Exception as e:
-            self.error_signal.emit(f"Failed to query topics: {e}")
+        except Exception as exc:
+            self.error_signal.emit(f"Failed to query topics: {exc}")
 
-    def subscribe(self, topic: str, type_str: str, depth: int = 10):
+    def subscribe(self, topic: str, type_str: str, depth: int = 10) -> None:
         with self._lock:
             if topic in self._subs:
                 return
             try:
                 msg_cls = get_message(type_str)
-            except Exception as e:
-                self.error_signal.emit(f"Cannot load message type '{type_str}': {e}")
+            except Exception as exc:
+                self.error_signal.emit(f"Cannot load message type '{type_str}': {exc}")
                 return
 
-            qos = QoSProfile(depth=depth)
+            qos = self._resolve_qos(depth, None)
 
-            def cb(msg):
+            def cb(msg) -> None:
                 try:
                     yaml = message_to_yaml(msg)
                 except Exception:
                     yaml = str(msg)
                 self.message_received.emit(topic, type_str, yaml)
 
-            try:
-                sub = self._node.create_subscription(msg_cls, topic, cb, qos)
-                self._subs[topic] = (sub, type_str)
-            except Exception as e:
-                self.error_signal.emit(f"Subscribe failed for {topic}: {e}")
+            subscription = self._create_subscription(msg_cls, topic, cb, qos)
+            if subscription is not None:
+                self._subs[topic] = (subscription, type_str)
 
-    def unsubscribe(self, topic: str):
+    def unsubscribe(self, topic: str) -> None:
         with self._lock:
-            tup = self._subs.pop(topic, None)
-            if not tup:
+            record = self._subs.pop(topic, None)
+            if not record:
                 return
-            sub, _ = tup
-            try:
-                self._node.destroy_subscription(sub)
-            except Exception as e:
-                self.error_signal.emit(f"Unsubscribe failed for {topic}: {e}")
+            subscription, _ = record
+            self._destroy_subscription(subscription, topic)
 
     def subscribe_typed(
         self,
@@ -119,26 +116,21 @@ class RosBridge(QObject):
         qos: Optional[QoSProfile] = None,
     ) -> Optional[str]:
         with self._lock:
-            qos_profile = qos if qos is not None else QoSProfile(depth=depth)
-            try:
-                sub = self._node.create_subscription(msg_cls, topic, callback, qos_profile)
-            except Exception as e:
-                self.error_signal.emit(f"Subscribe failed for {topic}: {e}")
+            qos_profile = self._resolve_qos(depth, qos)
+            subscription = self._create_subscription(msg_cls, topic, callback, qos_profile)
+            if subscription is None:
                 return None
             self._custom_counter += 1
             token = f"custom_{self._custom_counter}"
-            self._custom_subs[token] = sub
+            self._custom_subs[token] = subscription
             return token
 
-    def unsubscribe_typed(self, token: str):
+    def unsubscribe_typed(self, token: str) -> None:
         with self._lock:
-            sub = self._custom_subs.pop(token, None)
-            if not sub:
+            subscription = self._custom_subs.pop(token, None)
+            if not subscription:
                 return
-            try:
-                self._node.destroy_subscription(sub)
-            except Exception as e:
-                self.error_signal.emit(f"Unsubscribe failed for subscription {token}: {e}")
+            self._destroy_subscription(subscription, f"subscription {token}")
 
     def lookup_transform(self, target_frame: str, source_frame: str):
         with self._lock:
@@ -148,3 +140,27 @@ class RosBridge(QObject):
                 return self._tf_buffer.lookup_transform(target_frame, source_frame, Time())
             except Exception:
                 return None
+
+    def _resolve_qos(
+        self, depth: int, qos: Optional[QoSProfile]
+    ) -> QoSProfile:
+        return qos if qos is not None else QoSProfile(depth=depth)
+
+    def _create_subscription(
+        self,
+        msg_cls,
+        topic: str,
+        callback: Callable,
+        qos: QoSProfile,
+    ) -> Optional[Any]:
+        try:
+            return self._node.create_subscription(msg_cls, topic, callback, qos)
+        except Exception as exc:
+            self.error_signal.emit(f"Subscribe failed for {topic}: {exc}")
+            return None
+
+    def _destroy_subscription(self, subscription: Any, context: str) -> None:
+        try:
+            self._node.destroy_subscription(subscription)
+        except Exception as exc:
+            self.error_signal.emit(f"Unsubscribe failed for {context}: {exc}")

@@ -5,7 +5,7 @@ import os
 import signal
 import subprocess
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, List, Optional
 
 from .config import MuConfig
@@ -26,15 +26,31 @@ class LaunchRequest:
     cfg: MuConfig
     package: str
     launch_file: str
-    extra_ros_args: Optional[List[str]] = None
+    extra_ros_args: List[str] = field(default_factory=list)
 
     def command(self) -> str:
         return build_launch_command(
-            self.cfg, self.package, self.launch_file, self.extra_ros_args
+            self.cfg,
+            self.package,
+            self.launch_file,
+            self.extra_ros_args or None,
         )
 
     def shell(self) -> List[str]:
         return build_shell_command(self.cfg, self.command())
+
+def create_launch_request(
+    cfg: MuConfig,
+    package: str,
+    launch_file: str,
+    extra_ros_args: Optional[Iterable[str]] = None,
+) -> LaunchRequest:
+    return LaunchRequest(
+        cfg=cfg,
+        package=package,
+        launch_file=launch_file,
+        extra_ros_args=list(extra_ros_args or []),
+    )
 
 
 class RosLaunchProcess:
@@ -47,11 +63,11 @@ class RosLaunchProcess:
         launch_file: str,
         extra_ros_args: Optional[Iterable[str]] = None,
     ) -> None:
-        self.request = LaunchRequest(
+        self.request = create_launch_request(
             cfg=cfg,
             package=package,
             launch_file=launch_file,
-            extra_ros_args=list(extra_ros_args or []),
+            extra_ros_args=extra_ros_args,
         )
         self._lock = threading.RLock()
         self._proc: Optional[subprocess.Popen] = None
